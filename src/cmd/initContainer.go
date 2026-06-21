@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/containers/toolbox/pkg/nvidia"
 	"github.com/containers/toolbox/pkg/shell"
 	"github.com/containers/toolbox/pkg/utils"
 	"github.com/fsnotify/fsnotify"
@@ -180,6 +181,12 @@ func initContainer(cmd *cobra.Command, args []string) error {
 	}
 
 	defer toolbxEnvFile.Close()
+
+	// if multi, _ := utils.GetMultilibDir(); multi != "" {
+	// 	gbmVar := utils.GetGBMBackendPaths(multi)
+	// 	toolboxEnvFile.WriteString(gbmVar)
+	// 	toolbxEnvFile.WriteString(gbmVar)
+	// }
 
 	if toolbxDelayEntryPoint, ok := getDelayEntryPoint(); ok {
 		delayString := toolbxDelayEntryPoint.String()
@@ -417,6 +424,10 @@ func initContainerHelp(cmd *cobra.Command, args []string) {
 func applyCDISpecForNvidia(spec *specs.Spec) error {
 	if spec == nil {
 		panic("spec not specified")
+	}
+
+	if multi, _ := utils.GetMultilibDir(); multi != "" {
+		nvidia.PatchForMultilib(spec, multi)
 	}
 
 	logrus.Debug("Applying Container Device Interface for NVIDIA")

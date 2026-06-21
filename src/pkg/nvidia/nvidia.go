@@ -18,13 +18,17 @@ package nvidia
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"regexp"
+	"slices"
 
 	"github.com/NVIDIA/go-nvlib/pkg/nvlib/info"
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"github.com/NVIDIA/nvidia-container-toolkit/pkg/nvcdi"
 	nvspec "github.com/NVIDIA/nvidia-container-toolkit/pkg/nvcdi/spec"
 	"github.com/sirupsen/logrus"
+	"tags.cncf.io/container-device-interface/pkg/cdi"
 	"tags.cncf.io/container-device-interface/specs-go"
 )
 
@@ -124,6 +128,63 @@ func GenerateCDISpec() (*specs.Spec, error) {
 	logrus.Debugf("Generated Container Device Interface for NVIDIA with version %s", specRaw.Version)
 
 	return specRaw, nil
+}
+
+func PatchForMultilib(spec *specs.Spec, libPath string) {
+	var (
+		matcherLink  = regexp.MustCompile("^(.*)::(/lib|/lib64|/usr/lib|/usr/lib64)(/.*)$")
+		matcherMount = regexp.MustCompile("^(/lib|/lib64|/usr/lib|/usr/lib64)(/.*)?$")
+		replaceLink  = fmt.Sprintf("${1}::%s${3}", libPath)
+		replaceMount = fmt.Sprintf("%s${2}", libPath)
+	)
+
+	for _, mount := range spec.ContainerEdits.Mounts {
+		mount.ContainerPath = matcherMount.ReplaceAllString(mount.ContainerPath, replaceMount)
+	}
+
+	for _, hook := range spec.ContainerEdits.Hooks {
+		if hook.HookName != cdi.CreateContainerHook {
+			continue
+		}
+
+		if len(hook.Args) < 2 {
+			continue
+		}
+
+		if hook.Args[0] != "nvidia-cdi-hook" {
+			continue
+		}
+
+		switch hook.Args[1] {
+		case "create-symlinks":
+			hook.Args = slices.Collect(
+				func(yield func(string) bool) {
+					for i, entry := range hook.Args {
+						if i > 2 && entry != "--link" {
+							entry = matcherLink.ReplaceAllString(entry, replaceLink)
+						}
+						if !yield(entry) {
+							return
+						}
+					}
+				},
+			)
+		case "update-ldcache":
+			hook.Args = slices.Collect(
+				func(yield func(string) bool) {
+					for i, entry := range hook.Args {
+						if i > 2 && entry != "--folder" {
+							entry = matcherMount.ReplaceAllString(entry, replaceMount)
+						}
+						if !yield(entry) {
+							return
+						}
+					}
+				},
+			)
+		}
+	}
+
 }
 
 func SetLogLevel(level logrus.Level) {
